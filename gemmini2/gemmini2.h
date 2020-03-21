@@ -9,10 +9,10 @@
 typedef int8_t input_t; // Systolic array input datatype (feeding into PEs, moving out of accumulator)
 typedef int16_t output_t; // Systolic array output datatype (coming down from PEs, moving into accumulator)
 typedef int32_t accum_t; // Accumulator datatype (inside PEs for OS dataflow and for the external accumulator)
-static const uint32_t dim = 16; // Square dimension of systolic array
-static const uint32_t sp_matrices = 128*1024; // Size the scratchpad to fit sp_matrices matrices
-static const uint32_t accum_rows = 1024; // Number of systolic array rows in the accumulator
-static const uint64_t addr_len = 32; // Number of bits used to address the scratchpad/accumulator
+//static const uint32_t dim = 16; // Square dimension of systolic array
+//static const uint32_t sp_matrices = 128*1024; // Size the scratchpad to fit sp_matrices matrices
+//static const uint32_t accum_rows = 1024; // Number of systolic array rows in the accumulator
+//static const uint64_t addr_len = 32; // Number of bits used to address the scratchpad/accumulator
 
 #ifdef RISCV_ENABLE_GEMMINI_COMMITLOG
 #define dprintf(...) printf(__VA_ARGS__)
@@ -31,18 +31,21 @@ struct gemmini2_state_t
   reg_t m, n, k;
 
   // 32-bit gemmini2 address space
-  uint32_t output_sp_addr;
-  uint32_t preload_sp_addr;
+  //uint32_t output_sp_addr;
+  //uint32_t preload_sp_addr;
   Dataflow mode;
   Activation act;
   reg_t acc_shift, sys_shift, relu6_shift;
-  reg_t load_stride;
-  reg_t store_stride;
+  //reg_t load_stride;
+  //reg_t store_stride;
 
   bool enable;
-  std::vector<std::vector<input_t>> *spad; // Scratchpad constructed as systolic array rows
-  std::vector<std::vector<accum_t>> *pe_state; // Stores each PE's internal accumulator state
-  std::vector<std::vector<accum_t>> *accumulator;
+  //std::vector<std::vector<input_t>> *spad; // Scratchpad constructed as systolic array rows
+  //std::vector<std::vector<accum_t>> *pe_state; // Stores each PE's internal accumulator state
+  //std::vector<std::vector<accum_t>> *accumulator;
+
+  // [ssteffl] TODO: HACK figure out better repeating_bias isa
+  bool repeating_bias;
 };
 
 class gemmini2_t : public rocc_t
@@ -53,10 +56,11 @@ public:
   reg_t custom3(rocc_insn_t insn, reg_t xs1, reg_t xs2);
   void reset();
 
-  void mvin(reg_t dram_addr, reg_t sp_addr);
-  void mvout(reg_t dram_addr, reg_t sp_addr);
-  void preload(reg_t bd_addr, reg_t c_addr);
+  //void mvin(reg_t dram_addr, reg_t sp_addr);
+  //void mvout(reg_t dram_addr, reg_t sp_addr);
+  //void preload(reg_t bd_addr, reg_t c_addr);
   void setmode(reg_t rs1, reg_t rs2);
+  // TODO: maybe use a different opcode than the gemmini_compute_preload...
   void compute(reg_t a_addr, reg_t bd_addr, bool preload);
 
 private:
@@ -76,7 +80,8 @@ private:
   const unsigned config_addr_CD_funct = 11;
   const unsigned config_size0_funct = 12;
   const unsigned config_size1_funct = 13;
-  const unsigned config_reset = 14;
+  const unsigned config_repeating_bias_funct = 14;
+  const unsigned config_reset = 15;
 
   bool debug;
   input_t apply_activation(input_t value);
@@ -89,7 +94,8 @@ private:
 
   template <class T>
   std::vector<std::vector<T>> *
-  read_matrix_from_dram(reg_t addr, reg_t rows, reg_t cols, bool zeroable);
+  read_matrix_from_dram(reg_t addr, reg_t rows, reg_t cols, 
+                        bool zeroable, bool repeating_bias);
 
   template <class T>
   void write_to_dram(reg_t addr, T data);

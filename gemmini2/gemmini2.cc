@@ -5,40 +5,43 @@
 #include <iostream>
 #include <assert.h>
 
-REGISTER_EXTENSION(gemmini2, []() { printf("REGISTERING GEMMINI2-BETA ISA\n\n"); return new gemmini2_t; })
+REGISTER_EXTENSION(gemmini2, []() {             \
+  printf("REGISTERING GEMMINI2-BETA ISA\n\n");  \
+  return new gemmini2_t;                        \
+})
 
 void gemmini2_state_t::reset()
 {
   enable = true;
-
   a_addr = b_addr = c_addr = d_addr = 0;
   m = n = k = 0;
   
-  // [ssteffl] TODO: deprecate OS dataflow for gemmini2. maybe support IS mode?
-  mode = OS;
+  // [ssteffl] TODO: remove OS dataflow in gemmini2. maybe support IS mode?
+  mode = WS;
   act = NONE;
   acc_shift = 0;
   sys_shift = 0;
   relu6_shift = 0;
-  output_sp_addr = 0;
-  load_stride = dim * sizeof(input_t);
-  store_stride = dim * sizeof(input_t);
-  spad = new std::vector<std::vector<input_t>>(sp_matrices*dim, std::vector<input_t>(dim));
-  for (size_t row = 0; row < sp_matrices*dim; ++row) {
-    for (size_t elem = 0; elem < dim; ++elem) {
-      spad->at(row).at(elem) = 0;
-    }
-  }
-  pe_state = new std::vector<std::vector<accum_t>>(dim, std::vector<accum_t>(dim));
-  accumulator = new std::vector<std::vector<accum_t>>(accum_rows, std::vector<accum_t>(dim));
-  for (size_t row = 0; row < accum_rows; ++row) {
-    for (size_t elem = 0; elem < dim; ++elem) {
-      accumulator->at(row).at(elem) = 0;
-    }
-  }
+  repeating_bias = false;
+  //output_sp_addr = 0;
+  //load_stride = dim * sizeof(input_t);
+  //store_stride = dim * sizeof(input_t);
+  //spad = new std::vector<std::vector<input_t>>(sp_matrices*dim, std::vector<input_t>(dim));
+  //for (size_t row = 0; row < sp_matrices*dim; ++row) {
+  //  for (size_t elem = 0; elem < dim; ++elem) {
+  //    spad->at(row).at(elem) = 0;
+  //  }
+  //}
+  //pe_state = new std::vector<std::vector<accum_t>>(dim, std::vector<accum_t>(dim));
+  //accumulator = new std::vector<std::vector<accum_t>>(accum_rows, std::vector<accum_t>(dim));
+  //for (size_t row = 0; row < accum_rows; ++row) {
+  //  for (size_t elem = 0; elem < dim; ++elem) {
+  //    accumulator->at(row).at(elem) = 0;
+  //  }
+  //}
 
-  printf("Gemmini2 extension configured with:\n");
-  printf("    dim = %u\n", dim);
+  printf("Gemmini2 extension configured!\n");
+  //printf("    dim = %u\n", dim);
 }
 
 void gemmini2_t::reset() {
@@ -62,8 +65,10 @@ matrix_zeroes(reg_t rows, reg_t cols) {
 
 template <class T>
 std::vector<std::vector<T>> *
-gemmini2_t::read_matrix_from_dram(reg_t addr, reg_t rows, reg_t cols, bool zeroable) {
-  // Read and return Matrix of size `rows*cols` from address `addr` in main memory
+gemmini2_t::read_matrix_from_dram(reg_t addr, reg_t rows, reg_t cols, 
+                                  bool zeroable, bool repeating_bias) {
+  // Read and return Matrix of size `rows*cols` from address `addr` in main 
+  // memory
   
   // Initialize to all zeroes
   auto result = matrix_zeroes<T>(rows, cols);
@@ -80,7 +85,8 @@ gemmini2_t::read_matrix_from_dram(reg_t addr, reg_t rows, reg_t cols, bool zeroa
 
   // Load from memory 
   for (size_t i = 0; i < rows; i++) {
-    auto const dram_row_addr = addr + i*sizeof(T)*cols;
+    auto ii = repeating_bias ? 0 : i;
+    auto const dram_row_addr = addr + ii*sizeof(T)*cols;
     for (size_t j = 0; j < cols; j++) {
       auto const dram_byte_addr = dram_row_addr + j*sizeof(T);
       result->at(i).at(j) = gemmini2_t::read_from_dram<T>(dram_byte_addr);
@@ -91,12 +97,6 @@ gemmini2_t::read_matrix_from_dram(reg_t addr, reg_t rows, reg_t cols, bool zeroa
 
 template <class T>
 void gemmini2_t::write_to_dram(reg_t addr, T data) {
-
-  // if an output matrix is at addr 0, it is NULL, so don't do anything with it
-  if(addr == 0) {
-    return;
-  }
-
   for (size_t byte_idx = 0; byte_idx < sizeof(T); ++byte_idx) {
     p->get_mmu()->store_uint8(addr + byte_idx, (data >> (byte_idx*8)) & 0xFF);
   }
@@ -108,14 +108,18 @@ void gemmini2_t::setmode(reg_t rs1, reg_t rs2) {
     gemmini2_state_t::Activation new_act;
     reg_t new_acc_shift, new_sys_shift, new_relu6_shift;
 
-    auto rs1_2 = (rs1 >> 2) & 0b1; // extract rs1[2], 0 = output stationary, 1 = weight stationary
+    // extract rs1[2], 0 = output stationary, 1 = weight stationary
+    auto rs1_2 = (rs1 >> 2) & 0b1; 
     if (rs1_2 == 0) {
-      new_mode = gemmini2_state_t::OS;
+      //new_mode = gemmini2_state_t::OS;
+      printf("GEMMINI: OS-mode not supported\n");
+      illegal_instruction();
     } else {
       new_mode = gemmini2_state_t::WS;
     }
 
-    auto rs1_4_3 = (rs1 >> 3) & 0b11; // extract rs1[4:3], 0 = no activation, 1 = ReLU, 2 = ReLU6
+    // extract rs1[4:3], 0 = no activation, 1 = ReLU, 2 = ReLU6
+    auto rs1_4_3 = (rs1 >> 3) & 0b11; 
     if (rs1_4_3 == 0) {
       new_act = gemmini2_state_t::NONE;
     } else if (rs1_4_3 == 1) {
@@ -130,11 +134,16 @@ void gemmini2_t::setmode(reg_t rs1, reg_t rs2) {
     new_sys_shift = (rs2) & 0xFFFFFFFF;
     new_relu6_shift = (rs2 >> 32) & 0xFFFFFFFF;
 
-    dprintf("GEMMINI: config_ex - set dataflow mode from %d to %d\n", gemmini2_state.mode, new_mode);
-    dprintf("GEMMINI: config_ex - set activation function from %d to %d\n", gemmini2_state.act, new_act);
-    dprintf("GEMMINI: config_ex - set acc_shift from %lu to %lu\n", gemmini2_state.acc_shift, new_acc_shift);
-    dprintf("GEMMINI: config_ex - set sys_shift from %lu to %lu\n", gemmini2_state.sys_shift, new_sys_shift);
-    dprintf("GEMMINI: config_ex - set relu6_shift from %lu to %lu\n", gemmini2_state.relu6_shift, new_relu6_shift);
+    dprintf("GEMMINI: config_ex - set dataflow mode from %d to %d\n", 
+        gemmini2_state.mode, new_mode);
+    dprintf("GEMMINI: config_ex - set activation function from %d to %d\n", 
+        gemmini2_state.act, new_act);
+    dprintf("GEMMINI: config_ex - set acc_shift from %lu to %lu\n", 
+        gemmini2_state.acc_shift, new_acc_shift);
+    dprintf("GEMMINI: config_ex - set sys_shift from %lu to %lu\n", 
+        gemmini2_state.sys_shift, new_sys_shift);
+    dprintf("GEMMINI: config_ex - set relu6_shift from %lu to %lu\n", 
+        gemmini2_state.relu6_shift, new_relu6_shift);
 
     gemmini2_state.mode = new_mode;
     gemmini2_state.act = new_act;
@@ -145,58 +154,82 @@ void gemmini2_t::setmode(reg_t rs1, reg_t rs2) {
     gemmini2_state.acc_shift = new_acc_shift;
     gemmini2_state.sys_shift = new_sys_shift;
     gemmini2_state.relu6_shift = new_relu6_shift;
-  } else if ((rs1 & 0b11) == 1) { // rs1[1:0] == 2'b01, config_mvin, configure load pipeline
-    dprintf("GEMMINI: config_mvin - set load stride from %lu to %lu\n", gemmini2_state.load_stride, rs2);
-    gemmini2_state.load_stride = rs2;
-  } else if ((rs1 & 0b11) == 2) { // rs1[1:0] == 2'b10, config_mvout, configure store pipeline
-    dprintf("GEMMINI: config_mvout - set store stride from %lu to %lu\n", gemmini2_state.store_stride, rs2);
-    gemmini2_state.store_stride = rs2;
+  } 
+  else if ((rs1 & 0b11) == 1) { 
+    // rs1[1:0] == 2'b01, config_mvin, configure load pipeline
+    //dprintf("GEMMINI: config_mvin - set load stride from %lu to %lu\n", 
+    //    gemmini2_state.load_stride, rs2);
+    //gemmini2_state.load_stride = rs2;
+    printf("GEMMINI: config_mvin not supported!\n");
+    illegal_instruction();
+  } 
+  else if ((rs1 & 0b11) == 2) { 
+    // rs1[1:0] == 2'b10, config_mvout, configure store pipeline
+    //dprintf("GEMMINI: config_mvout - set store stride from %lu to %lu\n", 
+    //    gemmini2_state.store_stride, rs2);
+    //gemmini2_state.store_stride = rs2;
+    printf("GEMMINI: config_mvout not supported!\n");
+    illegal_instruction();
   }
 }
 
 void gemmini2_t::compute(reg_t a_addr, reg_t bd_addr, bool preload) {
-  // `compute` performs Gemmini's core function - matrix multiply-add - without referencing any underlying hardware detail.
+  // `compute` performs Gemmini's core function - matrix multiply-add - 
+  //  without referencing any underlying hardware detail.
   // 
   // * Operands A, B, and D are loaded from memory
   // * Multiply, add, activation, and any requested shifts are performed
   // * Result D is written back to memory
   // 
-  // These computations are made independent of systolic array sizes, scratchpad-memory sizes, 
+  // These computations are made independent of systolic array sizes, 
+  // scratchpad-memory sizes, 
   // and any other microarchitectural detail (other than datatypes). 
-  
 
   // FIXME: all three parameters are now ignored. Drop them. 
   // FIXME: error check state has been set up
   
   // Load operands from memory
   // FIXME: incorporate zero-value/ special address
-  auto A = read_matrix_from_dram<input_t>(gemmini2_state.a_addr, gemmini2_state.m, gemmini2_state.n, false);
-  auto B = read_matrix_from_dram<input_t>(gemmini2_state.b_addr, gemmini2_state.n, gemmini2_state.k, false);
-  auto D = read_matrix_from_dram<accum_t>(gemmini2_state.d_addr, gemmini2_state.m, gemmini2_state.k, true);
+  auto A = read_matrix_from_dram<input_t>(gemmini2_state.a_addr, 
+                                          gemmini2_state.m, 
+                                          gemmini2_state.k, 
+                                          false, false);
+  auto B = read_matrix_from_dram<input_t>(gemmini2_state.b_addr, 
+                                          gemmini2_state.k, 
+                                          gemmini2_state.n, 
+                                          false, false);
+  auto D = read_matrix_from_dram<accum_t>(gemmini2_state.d_addr, 
+                                          gemmini2_state.m, 
+                                          gemmini2_state.n, 
+                                          true, 
+                                          gemmini2_state.repeating_bias);
   // Initialize an accumulator/ result 
-  auto result = matrix_zeroes<input_t>(gemmini2_state.m, gemmini2_state.k);
+  auto C = matrix_zeroes<input_t>(gemmini2_state.m, gemmini2_state.n);
 
   // Multiply & apply activation
-  for (size_t x=0; x<gemmini2_state.m; x++) {
-    for (size_t y=0; y<gemmini2_state.k; y++) {
-      accum_t value = D->at(x).at(y);
-      for (size_t z=0; z<gemmini2_state.n; z++) {
-        value += A->at(x).at(z) * B->at(z).at(y);
+  for (size_t i=0; i<gemmini2_state.m; i++) {
+    for (size_t j=0; j<gemmini2_state.n; j++) {
+      accum_t value = D->at(i).at(j);
+      for (size_t k=0; k<gemmini2_state.k; k++) {
+        value += ((accum_t)A->at(i).at(k)) * ((accum_t)B->at(k).at(j));
       }
-      input_t shifted = gemmini2_state.mode == gemmini2_state_t::OS ?
-                             rounding_saturating_shift<input_t>(value, gemmini2_state.sys_shift) :
-                             rounding_saturating_shift<input_t>(value, 0);
+      //input_t shifted = (gemmini2_state.mode == gemmini2_state_t::OS) ?
+      //rounding_saturating_shift<input_t>(value, gemmini2_state.sys_shift):
+      //rounding_saturating_shift<input_t>(value, 0);
+      input_t shifted = rounding_saturating_shift<input_t>(value, 
+                          gemmini2_state.acc_shift);
       input_t activated = apply_activation(shifted);
-      result->at(x).at(y) = activated;
+      C->at(i).at(j) = activated;
     }
   }
   
   // Write back to memory
   for (size_t i = 0; i < gemmini2_state.m; i++) {
-    auto const dram_row_addr = gemmini2_state.c_addr + i*sizeof(input_t)*gemmini2_state.k;
-    for (size_t j = 0; j < gemmini2_state.k; j++) {
+    auto const dram_row_addr = gemmini2_state.c_addr + 
+                               i*sizeof(input_t)*gemmini2_state.n;
+    for (size_t j = 0; j < gemmini2_state.n; j++) {
       auto const dram_byte_addr = dram_row_addr + j*sizeof(input_t);
-      write_to_dram<input_t>(dram_byte_addr, result->at(i).at(j));
+      write_to_dram<input_t>(dram_byte_addr, C->at(i).at(j));
     }
   } 
 }
@@ -207,37 +240,58 @@ reg_t gemmini2_t::custom3(rocc_insn_t insn, reg_t xs1, reg_t xs2) {
   // FIXME: check we have that fourth bit available
   // printf("GEMMINI INSTRUCTION: %d\n", insn.funct);
 
-  if (insn.funct == mvin_funct)
-    printf("GEMMINI: deprecated `mvin` instruction will be ignored\n");
-  else if (insn.funct == mvout_funct)
-    printf("GEMMINI: deprecated `mvout` instruction will be ignored\n");
-  else if (insn.funct == preload_funct)
-    printf("GEMMINI: deprecated `preload` instruction will be ignored \n");
-  else if (insn.funct == setmode_funct)
-    setmode(xs1, xs2);
-  else if (insn.funct == compute_preloaded_funct)
-    compute(xs1, xs2, true);
-  else if (insn.funct == compute_accumulated_funct)
+  if (insn.funct == mvin_funct) {
+    printf("GEMMINI: deprecated `mvin` instruction \n");
+    illegal_instruction();
+  }
+  else if (insn.funct == mvout_funct) {
+    printf("GEMMINI: deprecated `mvout` instruction \n");
+    illegal_instruction();
+  }
+  else if (insn.funct == preload_funct) {
+    printf("GEMMINI: deprecated `preload` instruction \n");
+    illegal_instruction();
+  }
+  else if (insn.funct == compute_accumulated_funct) {
     // FIXME: whether to keep, adapt, or drop "compute accumulated"
-    compute(xs1, xs2, false);
+    // ssteffl: we should drop it
+    //compute(xs1, xs2, false);
+    printf("GEMMINI: deprecated `compute_acc` instruction\n");
+    illegal_instruction();
+  }
   else if (insn.funct == flush_funct) {
-    printf("GEMMINI: deprecated `flush` instruction will be ignored\n");
-  } else if (insn.funct == config_addr_AB_funct) {
+    printf("GEMMINI: deprecated `flush` instruction. DO NOT USE\n");
+  } 
+  else if (insn.funct == setmode_funct) {
+    setmode(xs1, xs2);
+  }
+  else if (insn.funct == compute_preloaded_funct) {
+    compute(xs1, xs2, true);
+  }
+  else if (insn.funct == config_addr_AB_funct) {
     gemmini2_state.a_addr = xs1;
     gemmini2_state.b_addr = xs2;
-  } else if (insn.funct == config_addr_CD_funct ){
+  } 
+  else if (insn.funct == config_addr_CD_funct ){
     gemmini2_state.c_addr = xs1;
     gemmini2_state.d_addr = xs2;
-  } else if (insn.funct == config_size0_funct ){
+  } 
+  else if (insn.funct == config_size0_funct ){
     gemmini2_state.m = xs1;
     gemmini2_state.n = xs2;
-  } else if (insn.funct == config_size1_funct ){
+  } 
+  else if (insn.funct == config_size1_funct ){
     gemmini2_state.k = xs1;
-  } else if (insn.funct == config_reset) {
+  } 
+  else if (insn.funct == config_repeating_bias_funct){
+    gemmini2_state.repeating_bias = (bool)xs1;
+  } 
+  else if (insn.funct == config_reset) {
     reset();
   }
   else {
-    printf("GEMMINI: encountered unknown instruction with funct: %d\n", insn.funct);
+    printf("GEMMINI: encountered unknown instruction with funct: %d\n", 
+        insn.funct);
     illegal_instruction();
   }
   return 0;
