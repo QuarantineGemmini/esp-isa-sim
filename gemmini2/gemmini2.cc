@@ -56,8 +56,8 @@ gemmini2_t::read_matrix_from_dram(reg_t addr, reg_t rows, reg_t cols,
   // Initialize to all zeroes
   auto result = matrix_zeroes<T>(rows, cols);
 
-  // if an input matrix is at addr 0, it is NULL, so don't do anything with it
-  // only the D matrix is zeroable; the A, B matrices must be valid
+  // if an input matrix is at addr 0, it is NULL, so don't do anything with 
+  // it only the D matrix is zeroable; the A, B matrices must be valid
   if(addr == 0) {
     if(zeroable) {
       return result;
@@ -281,7 +281,9 @@ input_t gemmini2_t::apply_activation(input_t value) {
     return value > 0 ? static_cast<input_t>(value) : static_cast<input_t>(0);
   } else if (gemmini2_state.act == gemmini2_state_t::RELU6) {
     auto positive = value > 0 ? value : static_cast<input_t>(0);
-    return value > (6 << gemmini2_state.relu6_shift) ? static_cast<input_t>(6 << gemmini2_state.relu6_shift) : positive;
+    return value > (6 << gemmini2_state.relu6_shift) ? 
+      static_cast<input_t>(6 << gemmini2_state.relu6_shift) : 
+      positive;
   } else if (gemmini2_state.act == gemmini2_state_t::NONE) {
     return static_cast<input_t>(value);
   } else assert(false);
