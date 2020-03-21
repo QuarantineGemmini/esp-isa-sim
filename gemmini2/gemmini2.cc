@@ -23,25 +23,8 @@ void gemmini2_state_t::reset()
   sys_shift = 0;
   relu6_shift = 0;
   repeating_bias = false;
-  //output_sp_addr = 0;
-  //load_stride = dim * sizeof(input_t);
-  //store_stride = dim * sizeof(input_t);
-  //spad = new std::vector<std::vector<input_t>>(sp_matrices*dim, std::vector<input_t>(dim));
-  //for (size_t row = 0; row < sp_matrices*dim; ++row) {
-  //  for (size_t elem = 0; elem < dim; ++elem) {
-  //    spad->at(row).at(elem) = 0;
-  //  }
-  //}
-  //pe_state = new std::vector<std::vector<accum_t>>(dim, std::vector<accum_t>(dim));
-  //accumulator = new std::vector<std::vector<accum_t>>(accum_rows, std::vector<accum_t>(dim));
-  //for (size_t row = 0; row < accum_rows; ++row) {
-  //  for (size_t elem = 0; elem < dim; ++elem) {
-  //    accumulator->at(row).at(elem) = 0;
-  //  }
-  //}
 
   printf("Gemmini2 extension configured!\n");
-  //printf("    dim = %u\n", dim);
 }
 
 void gemmini2_t::reset() {
@@ -157,17 +140,11 @@ void gemmini2_t::setmode(reg_t rs1, reg_t rs2) {
   } 
   else if ((rs1 & 0b11) == 1) { 
     // rs1[1:0] == 2'b01, config_mvin, configure load pipeline
-    //dprintf("GEMMINI: config_mvin - set load stride from %lu to %lu\n", 
-    //    gemmini2_state.load_stride, rs2);
-    //gemmini2_state.load_stride = rs2;
     printf("GEMMINI: config_mvin not supported!\n");
     illegal_instruction();
   } 
   else if ((rs1 & 0b11) == 2) { 
     // rs1[1:0] == 2'b10, config_mvout, configure store pipeline
-    //dprintf("GEMMINI: config_mvout - set store stride from %lu to %lu\n", 
-    //    gemmini2_state.store_stride, rs2);
-    //gemmini2_state.store_stride = rs2;
     printf("GEMMINI: config_mvout not supported!\n");
     illegal_instruction();
   }
@@ -189,7 +166,6 @@ void gemmini2_t::compute(reg_t a_addr, reg_t bd_addr, bool preload) {
   // FIXME: error check state has been set up
   
   // Load operands from memory
-  // FIXME: incorporate zero-value/ special address
   auto A = read_matrix_from_dram<input_t>(gemmini2_state.a_addr, 
                                           gemmini2_state.m, 
                                           gemmini2_state.k, 
@@ -297,7 +273,8 @@ reg_t gemmini2_t::custom3(rocc_insn_t insn, reg_t xs1, reg_t xs2) {
   return 0;
 }
 
-// Applying activation from PE post-shifted output to scratchpad (for OS dataflow)
+// Applying activation from PE post-shifted output to scratchpad 
+// (for OS dataflow)
 // or from accumulator to DRAM (after shifting, for WS dataflow)
 input_t gemmini2_t::apply_activation(input_t value) {
   if (gemmini2_state.act == gemmini2_state_t::RELU) {

@@ -30,19 +30,10 @@ struct gemmini2_state_t
   reg_t a_addr, b_addr, c_addr, d_addr;
   reg_t m, n, k;
 
-  // 32-bit gemmini2 address space
-  //uint32_t output_sp_addr;
-  //uint32_t preload_sp_addr;
   Dataflow mode;
   Activation act;
   reg_t acc_shift, sys_shift, relu6_shift;
-  //reg_t load_stride;
-  //reg_t store_stride;
-
   bool enable;
-  //std::vector<std::vector<input_t>> *spad; // Scratchpad constructed as systolic array rows
-  //std::vector<std::vector<accum_t>> *pe_state; // Stores each PE's internal accumulator state
-  //std::vector<std::vector<accum_t>> *accumulator;
 
   // [ssteffl] TODO: HACK figure out better repeating_bias isa
   bool repeating_bias;
@@ -56,11 +47,8 @@ public:
   reg_t custom3(rocc_insn_t insn, reg_t xs1, reg_t xs2);
   void reset();
 
-  //void mvin(reg_t dram_addr, reg_t sp_addr);
-  //void mvout(reg_t dram_addr, reg_t sp_addr);
-  //void preload(reg_t bd_addr, reg_t c_addr);
   void setmode(reg_t rs1, reg_t rs2);
-  // TODO: maybe use a different opcode than the gemmini_compute_preload...
+  // TODO: use a different opcode than the gemmini_compute_preload...
   void compute(reg_t a_addr, reg_t bd_addr, bool preload);
 
 private:
