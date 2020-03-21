@@ -709,6 +709,7 @@ enable_dirty
 enable_misaligned
 enable_hcommitlog
 enable_gemminicommitlog
+enable_gemmini2commitlog
 '
       ac_precious_vars='build_alias
 host_alias
@@ -1359,6 +1360,8 @@ Optional Features:
                           stores
   --enable-hcommitlog     Enable Hwacha commit log generation
   --enable-gemminicommitlog
+                          Enable Gemmini commit log generation
+  --enable-gemmini2commitlog
                           Enable Gemmini commit log generation
 
 Optional Packages:
@@ -4904,14 +4907,69 @@ $as_echo "$as_me: configuring default subproject : gemmini" >&6;}
 
 $as_echo "#define GEMMINI_ENABLED /**/" >>confdefs.h
 
-
-
       # Check whether --enable-gemminicommitlog was given.
 if test "${enable_gemminicommitlog+set}" = set; then :
   enableval=$enable_gemminicommitlog;
 fi
 
 if test "x$enable_gemminicommitlog" = "xyes"; then :
+
+
+$as_echo "#define RISCV_ENABLE_GEMMINI_COMMITLOG /**/" >>confdefs.h
+
+
+fi
+
+
+
+
+
+    # Determine if this is a required or an optional subproject
+
+
+
+    # Determine if there is a group with the same name
+
+
+
+    # Create variations of the subproject name suitable for use as a CPP
+    # enabled define, a shell enabled variable, and a shell function
+
+
+
+
+
+
+
+
+
+
+
+    # Add subproject to our running list
+
+    subprojects="$subprojects gemmini2"
+
+    # Process the subproject appropriately. If enabled add it to the
+    # $enabled_subprojects running shell variable, set a
+    # SUBPROJECT_ENABLED C define, and include the appropriate
+    # 'subproject.ac'.
+
+
+      { $as_echo "$as_me:${as_lineno-$LINENO}: configuring default subproject : gemmini2" >&5
+$as_echo "$as_me: configuring default subproject : gemmini2" >&6;}
+      ac_config_files="$ac_config_files gemmini2.mk:gemmini2/gemmini2.mk.in"
+
+      enable_gemmini2_sproj="yes"
+      subprojects_enabled="$subprojects_enabled gemmini2"
+
+$as_echo "#define GEMMINI2_ENABLED /**/" >>confdefs.h
+
+      # Check whether --enable-gemmini2commitlog was given.
+if test "${enable_gemmini2commitlog+set}" = set; then :
+  enableval=$enable_gemmini2commitlog;
+fi
+
+if test "x$enable_gemmini2commitlog" = "xyes"; then :
 
 
 $as_echo "#define RISCV_ENABLE_GEMMINI_COMMITLOG /**/" >>confdefs.h
@@ -5095,6 +5153,8 @@ ac_config_files="$ac_config_files riscv-softfloat.pc"
 ac_config_files="$ac_config_files riscv-hwacha.pc"
 
 ac_config_files="$ac_config_files riscv-gemmini.pc"
+
+ac_config_files="$ac_config_files riscv-gemmini2.pc"
 
 ac_config_files="$ac_config_files riscv-dummy_rocc.pc"
 
@@ -5795,6 +5855,7 @@ do
     "riscv.mk") CONFIG_FILES="$CONFIG_FILES riscv.mk:riscv/riscv.mk.in" ;;
     "hwacha.mk") CONFIG_FILES="$CONFIG_FILES hwacha.mk:hwacha/hwacha.mk.in" ;;
     "gemmini.mk") CONFIG_FILES="$CONFIG_FILES gemmini.mk:gemmini/gemmini.mk.in" ;;
+    "gemmini2.mk") CONFIG_FILES="$CONFIG_FILES gemmini2.mk:gemmini2/gemmini2.mk.in" ;;
     "dummy_rocc.mk") CONFIG_FILES="$CONFIG_FILES dummy_rocc.mk:dummy_rocc/dummy_rocc.mk.in" ;;
     "softfloat.mk") CONFIG_FILES="$CONFIG_FILES softfloat.mk:softfloat/softfloat.mk.in" ;;
     "spike_main.mk") CONFIG_FILES="$CONFIG_FILES spike_main.mk:spike_main/spike_main.mk.in" ;;
@@ -5806,6 +5867,7 @@ do
     "riscv-softfloat.pc") CONFIG_FILES="$CONFIG_FILES riscv-softfloat.pc" ;;
     "riscv-hwacha.pc") CONFIG_FILES="$CONFIG_FILES riscv-hwacha.pc" ;;
     "riscv-gemmini.pc") CONFIG_FILES="$CONFIG_FILES riscv-gemmini.pc" ;;
+    "riscv-gemmini2.pc") CONFIG_FILES="$CONFIG_FILES riscv-gemmini2.pc" ;;
     "riscv-dummy_rocc.pc") CONFIG_FILES="$CONFIG_FILES riscv-dummy_rocc.pc" ;;
     "riscv-spike_main.pc") CONFIG_FILES="$CONFIG_FILES riscv-spike_main.pc" ;;
 

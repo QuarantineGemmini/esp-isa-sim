@@ -1,0 +1,11 @@
+prefix=@prefix@
+exec_prefix=@prefix@
+libdir=${prefix}/@libdir@
+includedir=${prefix}/@includedir@
+
+Name: riscv-gemmini2
+Description: RISC-V Gemmini2 library
+Version: git
+Libs: -Wl,-rpath,${libdir} -L${libdir} -lgemmini2
+Cflags: -I${includedir}
+URL: http://riscv.org/download.html#tab_spike

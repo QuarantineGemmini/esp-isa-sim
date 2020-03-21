@@ -1,0 +1,19 @@
+gemmini2_subproject_deps = \
+	spike_main \
+	riscv \
+	softfloat \
+
+gemmini2_install_prog_srcs = \
+
+gemmini2_hdrs = \
+	gemmini2.h \
+
+
+gemmini2_srcs = \
+	gemmini2.cc \
+
+gemmini2_test_srcs =
+
+gemmini2_CFLAGS = -fPIC
+
+gemmini2_install_shared_lib = yes
