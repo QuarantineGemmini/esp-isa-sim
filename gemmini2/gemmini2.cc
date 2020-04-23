@@ -6,15 +6,43 @@
 #include <assert.h>
 
 REGISTER_EXTENSION(gemmini2, []() {             \
-  printf("REGISTERING GEMMINI2-BETA ISA\n\n");  \
+  printf("Registering Gemmini2 ISA (im2col edition)\n\n");  \
   return new gemmini2_t;                        \
 })
+
+void matrix_cfg::reset()
+{
+  // Reset base-pointer and its validity 
+  base_addr = 0;
+  addr_valid = false;
+
+  // Default addressing mode is row-major
+  mode = ROW_MAJOR;
+
+  // Scrub all im2col-addressing params 
+  batch_size = 0;
+  channels = 0;
+  padding = 0;
+  kernel_size = 0;
+  stride = 0;
+  
+  // Allow "no-config" row-major setup
+  cfg_valid = true;
+}
 
 void gemmini2_state_t::reset()
 {
   enable = true;
-  a_addr = b_addr = c_addr = d_addr = 0;
+  a.reset();
+  b.reset();
+  c.reset();
+  d.reset();
   m = n = k = 0;
+
+  size0_valid = false;
+  size1_valid = false;
+  config_ex_valid = false;
+  bias_valid = false;
   
   // [ssteffl] TODO: remove OS dataflow in gemmini2. maybe support IS mode?
   mode = WS;
@@ -24,7 +52,8 @@ void gemmini2_state_t::reset()
   relu6_shift = 0;
   repeating_bias = false;
 
-  printf("Gemmini2 extension configured!\n");
+  state = LISTENING;
+  printf("Gemmini2 reset\n");
 }
 
 void gemmini2_t::reset() {
@@ -48,10 +77,10 @@ matrix_zeroes(reg_t rows, reg_t cols) {
 
 template <class T>
 std::vector<std::vector<T>> *
-gemmini2_t::read_matrix_from_dram(reg_t addr, reg_t rows, reg_t cols, 
+gemmini2_t::read_matrix_from_dram(matrix_cfg & mat, reg_t rows, reg_t cols, 
                                   bool zeroable, bool repeating_bias) {
-  // Read and return Matrix of size `rows*cols` from address `addr` in main 
-  // memory
+  // Read and return Matrix of size `rows*cols` from address `addr` in main memory
+  reg_t addr = mat.base_addr;
   
   // Initialize to all zeroes
   auto result = matrix_zeroes<T>(rows, cols);
@@ -65,7 +94,9 @@ gemmini2_t::read_matrix_from_dram(reg_t addr, reg_t rows, reg_t cols,
     printf("ERROR: non-zeroable matrix given address zero!\n");
     exit(1);
   }
+  
 
+  if (mat.mode == matrix_cfg::AddrMode::ROW_MAJOR) {
   // Load from memory 
   for (size_t i = 0; i < rows; i++) {
     auto ii = repeating_bias ? 0 : i;
@@ -75,6 +106,10 @@ gemmini2_t::read_matrix_from_dram(reg_t addr, reg_t rows, reg_t cols,
       result->at(i).at(j) = gemmini2_t::read_from_dram<T>(dram_byte_addr);
     }
   }
+  } else { 
+    printf("ERROR: non-row-major addressing not supported, yet!\n"); 
+    exit(1);
+  } 
   return result;
 }
 
@@ -137,6 +172,8 @@ void gemmini2_t::setmode(reg_t rs1, reg_t rs2) {
     gemmini2_state.acc_shift = new_acc_shift;
     gemmini2_state.sys_shift = new_sys_shift;
     gemmini2_state.relu6_shift = new_relu6_shift;
+    
+    gemmini2_state.config_ex_valid = true;
   } 
   else if ((rs1 & 0b11) == 1) { 
     // rs1[1:0] == 2'b01, config_mvin, configure load pipeline
@@ -150,7 +187,7 @@ void gemmini2_t::setmode(reg_t rs1, reg_t rs2) {
   }
 }
 
-void gemmini2_t::compute(reg_t a_addr, reg_t bd_addr, bool preload) {
+void gemmini2_t::compute() { 
   // `compute` performs Gemmini's core function - matrix multiply-add - 
   //  without referencing any underlying hardware detail.
   // 
@@ -162,19 +199,18 @@ void gemmini2_t::compute(reg_t a_addr, reg_t bd_addr, bool preload) {
   // scratchpad-memory sizes, 
   // and any other microarchitectural detail (other than datatypes). 
 
-  // FIXME: all three parameters are now ignored. Drop them. 
   // FIXME: error check state has been set up
   
   // Load operands from memory
-  auto A = read_matrix_from_dram<input_t>(gemmini2_state.a_addr, 
+  auto A = read_matrix_from_dram<input_t>(gemmini2_state.a,
                                           gemmini2_state.m, 
                                           gemmini2_state.k, 
                                           false, false);
-  auto B = read_matrix_from_dram<input_t>(gemmini2_state.b_addr, 
+  auto B = read_matrix_from_dram<input_t>(gemmini2_state.b,
                                           gemmini2_state.k, 
                                           gemmini2_state.n, 
                                           false, false);
-  auto D = read_matrix_from_dram<accum_t>(gemmini2_state.d_addr, 
+  auto D = read_matrix_from_dram<accum_t>(gemmini2_state.d,
                                           gemmini2_state.m, 
                                           gemmini2_state.n, 
                                           true, 
@@ -201,7 +237,7 @@ void gemmini2_t::compute(reg_t a_addr, reg_t bd_addr, bool preload) {
   
   // Write back to memory
   for (size_t i = 0; i < gemmini2_state.m; i++) {
-    auto const dram_row_addr = gemmini2_state.c_addr + 
+    auto const dram_row_addr = gemmini2_state.c.base_addr + 
                                i*sizeof(input_t)*gemmini2_state.n;
     for (size_t j = 0; j < gemmini2_state.n; j++) {
       auto const dram_byte_addr = dram_row_addr + j*sizeof(input_t);
@@ -211,11 +247,9 @@ void gemmini2_t::compute(reg_t a_addr, reg_t bd_addr, bool preload) {
 }
 
 reg_t gemmini2_t::custom3(rocc_insn_t insn, reg_t xs1, reg_t xs2) {
-  insn.funct = (insn.funct & 0b1111); // Strip the dependency bits from the funct field
+  // Strip the dependency bits from the funct field 
+  insn.funct = (insn.funct & 0b11111); 
   
-  // FIXME: check we have that fourth bit available
-  // printf("GEMMINI INSTRUCTION: %d\n", insn.funct);
-
   if (insn.funct == mvin_funct) {
     printf("GEMMINI: deprecated `mvin` instruction \n");
     illegal_instruction();
@@ -228,39 +262,48 @@ reg_t gemmini2_t::custom3(rocc_insn_t insn, reg_t xs1, reg_t xs2) {
     printf("GEMMINI: deprecated `preload` instruction \n");
     illegal_instruction();
   }
-  else if (insn.funct == compute_accumulated_funct) {
-    // FIXME: whether to keep, adapt, or drop "compute accumulated"
-    // ssteffl: we should drop it
-    //compute(xs1, xs2, false);
-    printf("GEMMINI: deprecated `compute_acc` instruction\n");
-    illegal_instruction();
-  }
   else if (insn.funct == flush_funct) {
     printf("GEMMINI: deprecated `flush` instruction. DO NOT USE\n");
   } 
+  else if (insn.funct == compute_accumulated_funct) {
+    printf("GEMMINI: deprecated `compute_acc` instruction\n");
+    illegal_instruction();
+  }
+  else if (insn.funct == compute_preloaded_funct) {
+    printf("GEMMINI: pending deprecation: `compute_preloaded` instruction\n");
+    printf("GEMMINI: use `compute` instead\n");
+    compute(); 
+  }
+  else if (insn.funct == compute_funct) {
+    compute(); 
+  }
   else if (insn.funct == setmode_funct) {
     setmode(xs1, xs2);
   }
-  else if (insn.funct == compute_preloaded_funct) {
-    compute(xs1, xs2, true);
-  }
   else if (insn.funct == config_addr_AB_funct) {
-    gemmini2_state.a_addr = xs1;
-    gemmini2_state.b_addr = xs2;
+    gemmini2_state.a.base_addr = xs1;
+    gemmini2_state.a.addr_valid = true; 
+    gemmini2_state.b.base_addr = xs2;
+    gemmini2_state.b.addr_valid = true; 
   } 
   else if (insn.funct == config_addr_CD_funct ){
-    gemmini2_state.c_addr = xs1;
-    gemmini2_state.d_addr = xs2;
+    gemmini2_state.c.base_addr = xs1;
+    gemmini2_state.c.addr_valid = true; 
+    gemmini2_state.d.base_addr = xs2;
+    gemmini2_state.d.addr_valid = true; 
   } 
   else if (insn.funct == config_size0_funct ){
     gemmini2_state.m = xs1;
     gemmini2_state.n = xs2;
+    gemmini2_state.size0_valid = true;
   } 
   else if (insn.funct == config_size1_funct ){
     gemmini2_state.k = xs1;
+    gemmini2_state.size1_valid = true;
   } 
   else if (insn.funct == config_repeating_bias_funct){
     gemmini2_state.repeating_bias = (bool)xs1;
+    gemmini2_state.bias_valid = true;
   } 
   else if (insn.funct == config_reset) {
     reset();
