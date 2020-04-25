@@ -94,20 +94,55 @@ gemmini2_t::read_matrix_from_dram(matrix_cfg & mat, reg_t rows, reg_t cols,
     printf("ERROR: non-zeroable matrix given address zero!\n");
     exit(1);
   }
-  
 
   if (mat.mode == matrix_cfg::AddrMode::ROW_MAJOR) {
-  // Load from memory 
-  for (size_t i = 0; i < rows; i++) {
-    auto ii = repeating_bias ? 0 : i;
-    auto const dram_row_addr = addr + ii*sizeof(T)*cols;
-    for (size_t j = 0; j < cols; j++) {
-      auto const dram_byte_addr = dram_row_addr + j*sizeof(T);
-      result->at(i).at(j) = gemmini2_t::read_from_dram<T>(dram_byte_addr);
+    for (size_t i = 0; i < rows; i++) {
+      auto ii = repeating_bias ? 0 : i;
+      auto const dram_row_addr = addr + ii*sizeof(T)*cols;
+      for (size_t j = 0; j < cols; j++) {
+        auto const dram_byte_addr = dram_row_addr + j*sizeof(T);
+        result->at(i).at(j) = gemmini2_t::read_from_dram<T>(dram_byte_addr);
+      }
     }
-  }
+  } else if (mat.mode == matrix_cfg::AddrMode::IM2COL) {
+
+    // printf("SPIKE_GEMMINI2 IM2COL_PARAMS:    - [%u, %u, %u, %u, %u, %u]\n", 
+    //     mat.batch_size, mat.padding, mat.rows, mat.kernel_size, mat.stride, mat.channels); // YAML-ish 
+    int patch_row = 0;
+
+    for (int n_batch = 0; n_batch < mat.batch_size; n_batch++) {
+        for (int im_row = -mat.padding; im_row < mat.rows - mat.kernel_size + mat.padding + 1; im_row += mat.stride) {
+            for (int im_col = -mat.padding; im_col < mat.cols - mat.kernel_size + mat.padding + 1; im_col += mat.stride) {
+                int patch_col = 0;
+
+                for (int im_channel = 0; im_channel < mat.channels; im_channel++) {
+                    for (int filter_row = 0; filter_row < mat.kernel_size; filter_row++) {
+                        for (int filter_col = 0; filter_col < mat.kernel_size; filter_col++) {
+                            int pixel_row = im_row + filter_row;
+                            int pixel_col = im_col + filter_col;
+                            
+                            if (pixel_row < 0 || pixel_row >= mat.rows
+                                || pixel_col < 0 || pixel_col >= mat.cols) {
+
+                            } else {
+                                //output[patch_row][patch_col] = input[n_batch][pixel_row][pixel_col][im_channel];
+                                auto const dram_byte_addr = mat.base_addr 
+                                  + n_batch * mat.rows * mat.cols * mat.channels * sizeof(T) 
+                                  + pixel_row * mat.cols * mat.channels * sizeof(T) 
+                                  + pixel_col * mat.channels * sizeof(T) 
+                                  + im_channel * sizeof(T);
+                                result->at(patch_row).at(patch_col) = gemmini2_t::read_from_dram<T>(dram_byte_addr);
+                            }           
+                            patch_col++;
+                        }
+                    }
+                }           
+                patch_row++;
+            }
+        }
+    }
   } else { 
-    printf("ERROR: non-row-major addressing not supported, yet!\n"); 
+    printf("ERROR: unsupported matrix addressing mode\n"); 
     exit(1);
   } 
   return result;
@@ -246,6 +281,43 @@ void gemmini2_t::compute() {
   } 
 }
 
+void gemmini2_t::config_addr_mode(reg_t rs1, reg_t rs2) {
+  // Set up addressing config, as dictated by CONFIG_ADDR RoCC commands
+
+  // Extract which of our four matrices is being configured
+  auto mat_num = (rs2 >> 60) & 0xF; 
+  matrix_cfg * mat;
+  if (mat_num==0) mat = &gemmini2_state.a;
+  else if (mat_num==1) mat = &gemmini2_state.b;
+  else if (mat_num==3) mat = &gemmini2_state.d;
+  else if (mat_num==2) {
+    // mat = &gemmini2_state.c;
+    printf("GEMMINI ERROR: Storing non-row-major not supported, yet.");
+    assert(false);
+  } else {
+    printf("GEMMINI ERROR: Attempting to configure invalid matrix");
+    assert(false);
+  }
+
+  // Extract Addressing Mode
+  auto mode = (rs2 >> 56) & 0xF; 
+  if (mode != 1) { // For now, this better be setting IM2COL mode. Or else
+    printf("CONFIG_ADDR GOT ILLEGAL MODE %u\n", mode);
+    assert(false);
+  }
+  mat->mode = matrix_cfg::AddrMode::IM2COL;
+
+  // FIXME: maybe do some bounds checks here, e.g. for zero sizes
+  mat->rows = (rs1 >> 32);
+  mat->cols = (rs1 & 0xFFFFFFFF);
+  mat->stride = ((rs2 >> 48) & 0xFF);
+  mat->padding = ((rs2 >> 40) & 0xFF);
+  mat->channels = ((rs2 >> 32) & 0xFF);
+  mat->kernel_size = ((rs2 >> 16) & 0xFFFF);
+  mat->batch_size = ((rs2) & 0xFFFF);
+
+}
+
 reg_t gemmini2_t::custom3(rocc_insn_t insn, reg_t xs1, reg_t xs2) {
   // Strip the dependency bits from the funct field 
   insn.funct = (insn.funct & 0b11111); 
@@ -305,12 +377,14 @@ reg_t gemmini2_t::custom3(rocc_insn_t insn, reg_t xs1, reg_t xs2) {
     gemmini2_state.repeating_bias = (bool)xs1;
     gemmini2_state.bias_valid = true;
   } 
+  else if (insn.funct == config_A_funct){
+    config_addr_mode(xs1, xs2);
+  } 
   else if (insn.funct == config_reset) {
     reset();
   }
   else {
-    printf("GEMMINI: encountered unknown instruction with funct: %d\n", 
-        insn.funct);
+    printf("GEMMINI: encountered unknown instruction with funct: %d\n", insn.funct);
     illegal_instruction();
   }
   return 0;

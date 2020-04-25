@@ -31,10 +31,12 @@ struct matrix_cfg
   AddrMode mode;
 
   // im2col-mode params
-  uint8_t batch_size;
+  uint32_t rows;
+  uint32_t cols;
+  uint16_t batch_size;
+  uint16_t kernel_size;
   uint8_t channels;
   uint8_t padding;
-  uint8_t kernel_size;
   uint8_t stride;
   bool cfg_valid;
   
@@ -79,6 +81,7 @@ public:
   void reset();
 
   void setmode(reg_t rs1, reg_t rs2);
+  void config_addr_mode(reg_t rs1, reg_t rs2);
   void compute(); 
 
 private:
