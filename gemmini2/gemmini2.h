@@ -31,13 +31,14 @@ struct matrix_cfg
   AddrMode mode;
 
   // im2col-mode params
-  uint32_t rows;
-  uint32_t cols;
-  uint16_t batch_size;
-  uint16_t kernel_size;
-  uint8_t channels;
-  uint8_t padding;
-  uint8_t stride;
+  // FIXME: whether to store these as ints for ease of math, or their command sizes
+  int  rows; // uint32_t
+  int  cols;
+  int  batch_size; // uint16_t
+  int  kernel_size;
+  int  channels;  // uint8_t
+  int padding;
+  int stride;
   bool cfg_valid;
   
   // Methods
