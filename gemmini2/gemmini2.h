@@ -10,7 +10,7 @@
 typedef int8_t input_t; 
 // Systolic array output datatype (coming down from PEs, 
 //  moving into accumulator)
-typedef int16_t output_t; 
+typedef int32_t output_t; 
 // Accumulator datatype (inside PEs for OS dataflow and for the 
 //  external accumulator)
 typedef int32_t accum_t; 
@@ -23,58 +23,47 @@ typedef int32_t accum_t;
 
 struct matrix_cfg 
 {
-  reg_t base_addr;
-  bool addr_valid;
-  
-  // Addressing modes
-  enum AddrMode {ROW_MAJOR, IM2COL};
-  AddrMode mode;
+  enum AddrMode {NORMAL, IM2COL};
 
-  // im2col-mode params
-  // FIXME: whether to store these as ints for ease of math, or their command sizes
-  int  rows; // uint32_t
-  int  cols;
-  int  batch_size; // uint16_t
-  int  kernel_size;
-  int  channels;  // uint8_t
-  int padding;
-  int stride;
-  bool cfg_valid;
+  AddrMode mode;
+  reg_t    base_addr;
+  uint32_t in_rows;
+  uint32_t in_cols;
+  uint16_t stride;
+  uint8_t  padding;
+  uint16_t in_channels;
+  uint16_t kernel_size;
   
-  // Methods
   void reset();
 };
 
 struct gemmini2_state_t
 {
-  enum GemminiState {LISTENING, COMPUTING, ERROR};
-  GemminiState state;
-
   enum Dataflow {OS, WS};
   enum Activation {NONE, RELU, RELU6};
-  void reset();
-
-  // Matrice & Sizes
-  matrix_cfg a, b, c, d;
-  reg_t m, n, k;
 
   Dataflow mode;
   Activation act;
   reg_t acc_shift, sys_shift, relu6_shift;
-  bool enable;
-
-  // [ssteffl] TODO: HACK figure out better repeating_bias isa
   bool repeating_bias;
-  
+  matrix_cfg a, b, c, d;
+  reg_t m, n, k;
+
   // Config-valid flags
+  bool config_ex_valid;
+  bool addr_ab_valid;
+  bool addr_cd_valid;
   bool size0_valid;
   bool size1_valid;
-  bool config_ex_valid;
   bool bias_valid;
+
+  void reset();
 };
 
 class gemmini2_t : public rocc_t
 {
+  enum MatrixId {MATRIX_A, MATRIX_B, MATRIX_C, MATRIX_D};
+
 public:
   gemmini2_t() : cause(0), aux(0), debug(false) {}
   const char* name() { return "gemmini2"; }
@@ -102,17 +91,17 @@ private:
   const unsigned setmode_funct = 0;
   
   // Gemmini2 Opcodes
-  const unsigned config_addr_AB_funct = 10;
-  const unsigned config_addr_CD_funct = 11;
-  const unsigned config_size0_funct = 12;
-  const unsigned config_size1_funct = 13;
+  const unsigned config_addr_AB_funct        = 10;
+  const unsigned config_addr_CD_funct        = 11;
+  const unsigned config_size0_funct          = 12;
+  const unsigned config_size1_funct          = 13;
   const unsigned config_repeating_bias_funct = 14;
-  const unsigned config_reset = 15;
-  const unsigned compute_funct = 16;
-  const unsigned config_A_funct = 17;
-  const unsigned config_B_funct = 18;
-  const unsigned config_C_funct = 19;
-  const unsigned config_D_funct = 20;
+  const unsigned config_reset                = 15;
+  const unsigned compute_funct               = 16;
+  const unsigned config_addr_A_funct         = 17;
+  const unsigned config_addr_B_funct         = 18;
+  const unsigned config_addr_C_funct         = 19;
+  const unsigned config_addr_D_funct         = 20;
 
   bool debug;
   input_t apply_activation(input_t value);
